@@ -1,0 +1,297 @@
+---
+title: "Prediction and Model Selection with LASSO, Ridge, Elastic Net"
+output: pdf_document
+---
+The percentage of body fat is an index which is used extensively in healthcare. Identifying this index's relationship to other health factors is of interest to health professionals. The dataset \texttt{FatData.csv} includes two measures of body fat percentage, 10 body circumference measurements, and other information such as weight, height, age, etc., recorded for 252 men. Each man's percentage of body fat was accurately estimated by an underwater weighing technique. Interest lies in modelling and predicting the body fat percentage measured by Brozek's index as a function of other variables.  The explanation for each of the measured variables is below:
+
+\begin{itemize}
+
+\item \texttt{brozek} :  Percent of body fat using Brozek's equation = $\max(0\,,\,457/Density - 414.2)$
+
+\item \texttt{siri} :  Percent of body fat using Siri's equation = $\max(0\,,\,495/Density - 450)$
+
+\item \texttt{density} : Density (gm/$cm^3$)
+
+\item \texttt{age} : Age (yrs)
+
+\item \texttt{weight} : Weight (lbs)
+
+\item \texttt{height} : Height (inches)
+
+\item \texttt{adipos} : Adiposity index = Weight/(Height$^2$) (kg/$m^2$)
+
+\item \texttt{free} : Fat Free Weight = (1 - fraction of body fat using Brozek's index)$\times$Weight (lbs)
+
+\item \texttt{neck} : Neck circumference (cm)
+
+\item \texttt{chest} : Chest circumference (cm)
+
+\item \texttt{abdom} : Abdomen circumference (cm) at the umbilicus and level with the iliac crest
+
+\item \texttt{hip} : Hip circumference (cm)
+
+\item \texttt{thigh} : Thigh circumference (cm)
+
+\item \texttt{knee} : Knee circumference (cm)
+
+\item \texttt{ankle} : Ankle circumference (cm)
+
+\item \texttt{biceps} : Extended biceps circumference (cm)
+
+\item \texttt{forearm} : Forearm circumference (cm)
+
+\item \texttt{wrist} : Wrist circumference (cm) distal to the styloid processes
+
+\end{itemize}
+
+Since we are building a model with percent of body fat using Brozek's index as the dependent/response
+variable, it makes sense to exclude Siri's index. We also exclude density, since
+it is part of the equation to get Brozek's index. Thus, if we know the density,
+we would not need to predict anything, and we would get the body fat percentage
+directly.
+We also exclude free, since the calculation of free includes the fraction
+of body fat using Brozek's index. Thus, the response is part of the equation
+for free, so we need to exclude it.
+Since we are ignoring any potential multicollinearity for now, we can leave
+the other variables in the model, although it is very obvious there are 
+predictors that are extremely correlated like height and weight.
+
+
+
+First, We take a look at the order of variables appearing in the model using LASSO
+vs forward stepwise.
+
+```{r}
+set.seed(444)
+library(glmnet)
+library(lars)
+
+fat <- read.csv("FatData.csv", header = TRUE)
+
+Fat_Modelling = fat[1:225, ]
+
+Fat_Test = fat[226:252, ]
+
+
+Fat_Modelling <- subset(Fat_Modelling, select = -c(siri,density,free))
+Fat_Test = subset(Fat_Test, select = -c(siri,density,free))
+
+pen = 0.2
+
+X <- model.matrix(Fat_Modelling$brozek ~ . , data = Fat_Modelling)[,-1]
+
+Y <- Fat_Modelling[,"brozek"]
+model.lasso = lars(X , Y, type="lasso")
+
+plot(model.lasso)
+
+model.lasso
+
+model.step = lars(X , Y , type="step")
+
+plot(model.step)
+model.step
+
+```
+The order of variables that appear using LASSO is abdom, height, age, wrist, neck, forearm, hip, weight, biceps, thigh, knee, ankle, adipos, chest.
+
+The order of variables that appear using forward stepwise is abdom, wrist, age, height, forearm, neck, hip, thigh, knee, ankle, biceps, weight, adipos, chest.
+
+Both methods result in abdom appearing first, and chest appearing last. Both methods also have abdom, wrist, age, height in the
+top 4.
+
+
+\newpage
+
+
+## LASSO
+
+
+
+```{r}
+
+set.seed(444)
+library(glmnet)
+library(caret)
+
+lambda <- 10^seq(-3, 3, length = 100)
+
+lasso1 <- train(brozek ~., data = Fat_Modelling, method = "glmnet",
+               trControl = trainControl("cv", number = 10),
+               tuneGrid = expand.grid(alpha = 1, lambda = lambda))
+
+coef(lasso1$finalModel, lasso1$bestTune$lambda)
+
+
+lasso1$bestTune$lambda
+
+```
+Using 10-fold cross validation, we find that the optimum value of the penalty factor for a LASSO model is $\lambda$ =  0.03764936
+The variables that are included in the model based on this penalty factor are
+age, weight, height, adipos, neck, abdom, hip, thigh, knee, ankle, biceps forearm, wrist.
+
+\newpage
+
+## Elastic Net
+
+
+```{r}
+
+
+library(caret)
+library(glmnet)
+
+X = as.matrix(Fat_Modelling[, -1])
+
+cv.error = c()
+lambda.cv = c()
+
+alpha.values=seq(0.1, 0.9, by=0.1)
+for(alpha in alpha.values) {
+  set.seed(844)
+  cv.ELN <- cv.glmnet(X, Fat_Modelling$brozek, alpha=alpha)
+  cv.error = c(cv.error, min(cv.ELN$cvm))
+  lambda.cv = c(lambda.cv, cv.ELN$lambda.min)
+}
+
+
+cv.error
+
+indx = which.min(cv.error)
+alpha.values[indx]
+lambda.cv[indx]
+
+
+fit.ELN.CrossValidated = glmnet(X, Fat_Modelling$brozek ,
+                             alpha = alpha.values[indx] , lambda=lambda.cv[indx])
+coef(fit.ELN.CrossValidated)
+
+
+
+```
+Using 10-fold cross validation, we find that the optimum value of the penalty factor for an Elastic Net model is 0.01779706.
+The optimum value for the mixing parameter is 0.9.
+
+All the variables  are included in the model based on the cross-validated values
+of the penalty factor and the mixing parameter.
+
+\newpage
+
+
+## Comparing LASSO, Ridge, Elastic Net and OLS
+
+
+```{r}
+
+library(dplyr)
+library(caret)
+library(glmnet)
+
+set.seed(444)
+
+# Ridge
+
+cv_lambda_ridge <- cv.glmnet(X, Y, alpha = 0) 
+
+cv_lambda_ridge
+
+ridge.optimal <- glmnet(x = X, y = Y, alpha = 0, lambda = cv_lambda_ridge$lambda.min)
+
+
+
+ridge.optimal.coef <- predict(ridge.optimal, type = "coefficients",
+                      s = cv_lambda_ridge$lambda.min)[1:15, ]
+
+ridge.optimal$beta
+
+lambda <- 10^seq(-3, 3, length = 100)
+
+
+ridge <- train(brozek ~., data = Fat_Modelling, method = "glmnet",
+               trControl = trainControl("cv", number = 10),
+               tuneGrid = expand.grid(alpha = 0, lambda = lambda))
+
+coef(ridge$finalModel, ridge$bestTune$lambda)
+
+predictionsr <- ridge %>% predict(Fat_Test)
+
+RMSE = RMSE(predictionsr, Fat_Test$brozek)
+
+RMSE
+
+
+```
+
+```{r}
+
+set.seed(444)
+
+
+# Lasso
+
+lasso1 <- train(brozek ~., data = Fat_Modelling, method = "glmnet",
+               trControl = trainControl("cv", number = 10),
+               tuneGrid = expand.grid(alpha = 1, lambda = lambda))
+
+coef(lasso1$finalModel, lasso1$bestTune$lambda)
+
+predictionsl <- lasso1 %>% predict(Fat_Test)
+
+RMSE = RMSE(predictionsl, Fat_Test$brozek)
+
+RMSE
+
+
+
+```
+
+
+```{r}
+set.seed(444)
+library(dplyr)
+
+alpha = seq(from = 0.1, to = 0.9, by = 0.1)
+
+
+y <- Fat_Modelling$brozek
+
+cvenet <-  train(brozek ~ . , data = Fat_Modelling, method = "glmnet",
+               trControl = trainControl(method = "cv", number = 10), tuneLength = 10)
+
+p <- cvenet$results
+
+p <- subset(p, alpha != 1)
+
+min <- which.min(p$RMSE)
+
+p[84,]
+
+#coef(cvenet$finalModel, 0.03515805)
+
+# Elastic Net
+predictionse <- cvenet %>% predict(Fat_Test)
+
+RMSE = RMSE(predictionse, Fat_Test$brozek)
+
+RMSE
+
+
+```
+
+```{r}
+
+# OLS
+
+ols <- lm(Fat_Modelling$brozek ~. , data = Fat_Modelling)
+
+predols <- predict(ols, newdata = Fat_Test)
+
+sqrt(mean((predols - Fat_Test$brozek)^2))
+
+```
+
+
+We see that the OLS model has the highest prediction error, while LASSO has the
+lowest prediction error. Thus, we choose LASSO with cross validated parameters
+for our best model.
+
